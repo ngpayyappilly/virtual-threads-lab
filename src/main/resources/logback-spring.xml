@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+	<!-- Local/dev: readable text using logging.pattern.console from application.yaml
+	     (includes traceId/spanId). -->
+	<springProfile name="!prod">
+		<include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+	</springProfile>
+
+	<!-- prod: one ECS-format JSON object per line. trace.id / span.id are emitted from the MDC.
+	     Boot's console-appender.xml doesn't do structured output, so the encoder is explicit. -->
+	<springProfile name="prod">
+		<appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+			<encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+				<format>ecs</format>
+			</encoder>
+		</appender>
+	</springProfile>
+
+	<!-- Forwards log records (with trace context) to the OTLP log exporter. Bound to the
+	     OpenTelemetry bean at startup by OpenTelemetryLogbackConfig. -->
+	<appender name="OTEL" class="io.opentelemetry.instrumentation.logback.appender.v1_0.OpenTelemetryAppender">
+		<captureCodeAttributes>true</captureCodeAttributes>
+		<captureMdcAttributes>*</captureMdcAttributes>
+	</appender>
+
+	<root level="INFO">
+		<appender-ref ref="CONSOLE"/>
+		<appender-ref ref="OTEL"/>
+	</root>
+</configuration>

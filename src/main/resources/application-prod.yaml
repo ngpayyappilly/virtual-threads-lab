@@ -1,0 +1,2 @@
+# Active in the production-style container (SPRING_PROFILES_ACTIVE=prod).
+# Console logging is JSON (ECS) in this profile; see logback-spring.xml.

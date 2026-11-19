@@ -1,0 +1,60 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.1.2'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.cloudwalkers'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.0'
+	runtimeOnly 'org.postgresql:postgresql'
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+	implementation 'io.micrometer:micrometer-java21' // VirtualThreadMetrics (JFR-based)
+	implementation 'org.springframework.boot:spring-boot-starter-micrometer-metrics'
+	implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
+	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+	developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
+	runtimeOnly 'io.micrometer:micrometer-registry-otlp'
+	implementation 'io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0:2.28.0-alpha' // ships logs over OTLP (version pairs with OTel SDK 1.62)
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
+	testImplementation 'org.springframework.boot:spring-boot-starter-micrometer-metrics-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-opentelemetry-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('bootRun') {
+	// Remote debugging for the dev container: set DEBUG_JVM=true (compose.yaml exposes 5005)
+	if (System.getenv('DEBUG_JVM') == 'true') {
+		jvmArgs '-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005'
+	}
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+	// Ryuk (Testcontainers' cleanup sidecar) can't mount the socket on Docker Desktop for macOS when
+	// ~/.testcontainers.properties sets tc.host to docker.raw.sock. Spring stops the test
+	// containers when the context closes, so cleanup still happens in normal runs.
+	environment 'TESTCONTAINERS_RYUK_DISABLED', 'true'
+}

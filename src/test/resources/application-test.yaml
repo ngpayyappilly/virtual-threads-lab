@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: threadsapp
+
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          enabled: false
+
+app:
+  sample-data:
+    enabled: false

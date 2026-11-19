@@ -1,0 +1,17 @@
+# Active in the dev containers (SPRING_PROFILES_ACTIVE=dev).
+logging:
+  level:
+    com.cloudwalkers.threadsapp: DEBUG
+    org.hibernate.SQL: DEBUG # one line per statement (replaces show-sql)
+
+spring:
+  devtools:
+    restart:
+      poll-interval: 1s # file events don't propagate reliably through bind mounts
+      quiet-period: 400ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'
