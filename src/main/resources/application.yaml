@@ -1,6 +1,6 @@
 spring:
   application:
-    name: threadsapp
+    name: virtual-threads-lab
   threads:
     virtual:
       enabled: true # Tomcat request handling, @Async and task executors run on virtual threads
@@ -8,9 +8,9 @@ spring:
   datasource:
     # Overridden automatically by Spring's docker-compose support when running from the host,
     # and by SPRING_DATASOURCE_* in the containers.
-    url: jdbc:postgresql://localhost:5432/threadsapp
-    username: threadsapp
-    password: threadsapp
+    url: jdbc:postgresql://localhost:5432/vtlab
+    username: vtlab
+    password: vtlab
   jpa:
     open-in-view: false
     hibernate:
@@ -27,7 +27,7 @@ logging:
     # traceId/spanId come from Micrometer Tracing via the MDC (blank outside a traced scope)
     console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %5p ${spring.application.name} [traceId=%X{traceId:-} spanId=%X{spanId:-}] [%t] %-36.36logger{35} : %m%n%wEx"
   level:
-    com.cloudwalkers.threadsapp: INFO
+    com.cloudwalkers.virtualthreadslab: INFO
     # handled exceptions are logged by GlobalExceptionHandler; skip Spring's duplicate WARN
     org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver: ERROR
 

@@ -1,6 +1,6 @@
 spring:
   application:
-    name: threadsapp
+    name: virtual-threads-lab
 
 management:
   otlp:

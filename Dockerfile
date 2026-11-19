@@ -8,7 +8,7 @@ COPY gradle gradle
 RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon dependencies > /dev/null
 COPY src src
 RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon bootJar -x test \
-    && java -Djarmode=tools -jar build/libs/threadsapp-*-SNAPSHOT.jar extract --layers --destination build/extracted
+    && java -Djarmode=tools -jar build/libs/virtual-threads-lab-*-SNAPSHOT.jar extract --layers --destination build/extracted
 
 # ---- runtime ----
 FROM eclipse-temurin:21-jre
@@ -20,4 +20,4 @@ COPY --from=build /workspace/build/extracted/spring-boot-loader/ ./
 COPY --from=build /workspace/build/extracted/snapshot-dependencies/ ./
 COPY --from=build /workspace/build/extracted/application/ ./
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "threadsapp-0.0.1-SNAPSHOT.jar"]
+ENTRYPOINT ["java", "-jar", "virtual-threads-lab-0.0.1-SNAPSHOT.jar"]
