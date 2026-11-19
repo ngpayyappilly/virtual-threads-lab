@@ -19,7 +19,7 @@ export const options = {
     crud: { executor: 'ramping-vus', exec: 'crud', stages: ramp(PEAK) },
     // lots of concurrent requests blocked on "I/O": virtual threads shine here
     slow: { executor: 'ramping-vus', exec: 'slow', stages: ramp(PEAK) },
-    // blocking inside synchronized: pins virtual threads on Java 21
+    // blocking in a native frame: pins virtual threads (synchronized no longer pins on Java 24+)
     ...(__ENV.PINNED === 'false' ? {} : {
       pinned: { executor: 'constant-vus', exec: 'pinned', vus: 10, duration: '90s', startTime: '10s' },
     }),
