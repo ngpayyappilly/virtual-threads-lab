@@ -33,15 +33,14 @@ class ThreadInfoController {
 	}
 
 	/**
-	 * Load-test demo: blocking inside {@code synchronized} pins the virtual thread to its
-	 * carrier on Java 21, which shows up as {@code jvm.threads.virtual.pinned}.
+	 * Load-test demo: blocks inside a native frame, which pins the virtual thread to its carrier
+	 * and shows up as {@code jvm.threads.virtual.pinned}. ({@code synchronized} no longer pins
+	 * on Java 24+, so it can't be used for this any more.)
 	 */
 	@GetMapping("/pinned")
-	@Operation(summary = "Simulate a pinning bug: sleeps while holding a monitor")
-	ThreadInfo pinned(@RequestParam(defaultValue = "100") long millis) throws InterruptedException {
-		synchronized (new Object()) {
-			Thread.sleep(Math.clamp(millis, 0, MAX_MILLIS));
-		}
+	@Operation(summary = "Simulate a pinning bug: sleeps in a native frame, holding the carrier thread")
+	ThreadInfo pinned(@RequestParam(defaultValue = "100") long millis) {
+		NativePinning.sleepPinned(Math.clamp(millis, 0, MAX_MILLIS));
 		return thread();
 	}
 

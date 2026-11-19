@@ -1,8 +1,8 @@
 # virtual-threads-lab
 
-A Threads-style social API (users, posts, comments) built to **run on Java 21 virtual threads and make their behaviour visible**: metrics, traces and logs flow to Grafana, and a k6 load test plus a couple of demo endpoints let you watch virtual threads under load, and watch them get pinned.
+A Threads-style social API (users, posts, comments) built to **run on Java 25 virtual threads and make their behaviour visible**: metrics, traces and logs flow to Grafana, and a k6 load test plus a couple of demo endpoints let you watch virtual threads under load, and watch them get pinned.
 
-- **Spring Boot 4.1** (Java 21, Gradle), Spring MVC on Tomcat
+- **Spring Boot 4.1** on **Java 25** (Gradle), Spring MVC on Tomcat
 - **Virtual threads** for every request (`spring.threads.virtual.enabled=true`)
 - **PostgreSQL 17** with **Flyway** migrations, Spring Data JPA / Hibernate
 - **Micrometer + OpenTelemetry**: metrics, traces and logs pushed over OTLP to Grafana (Prometheus, Tempo, Loki), plus an Actuator Prometheus endpoint
@@ -27,7 +27,7 @@ A Threads-style social API (users, posts, comments) built to **run on Java 21 vi
 
 ## Quick start
 
-Requirements: Docker (with Compose), and a JDK 21 if you want to build or run on the host.
+Requirements: Docker (with Compose), and a **JDK 25** if you want to build or run on the host (Gradle picks it up through toolchains).
 
 ### Dev mode in Docker (recommended)
 
@@ -46,7 +46,7 @@ Stop with `docker compose --profile dev down` (add `-v` to also delete the datab
 ### On the host
 
 ```bash
-export JAVA_HOME=/path/to/jdk-21
+export JAVA_HOME=/path/to/jdk-25
 ./gradlew bootRun
 ```
 
@@ -135,7 +135,7 @@ Validation: `username` 3-30 chars of letters, digits, `_` or `.`; `email` valid 
 |---|---|---|
 | GET | `/system/thread` | Reports which thread served the request: `{name, virtual, threadId}` |
 | GET | `/system/slow?millis=500` | Sleeps (simulated blocking I/O). A virtual thread unmounts from its carrier while it sleeps. Capped at 10 s. |
-| GET | `/system/pinned?millis=100` | Sleeps **inside `synchronized`**, which pins the virtual thread to its carrier on Java 21. A deliberate demo of a pinning bug. Capped at 10 s. |
+| GET | `/system/pinned?millis=100` | Sleeps **in a native frame** (a libc `qsort` whose comparator is a Java callback that sleeps), which pins the virtual thread to its carrier. A deliberate demo of a pinning bug; `synchronized` no longer pins on Java 24+. Capped at 10 s. |
 
 `/system/slow` and `/system/pinned` exist to generate interesting thread behaviour. Remove them before turning this into a real service.
 
@@ -173,17 +173,22 @@ curl -s localhost:8080/api/v1/posts/3
 
 ### Why virtual threads need their own metrics
 
-Micrometer's standard JVM metrics (`jvm.threads.live`, `daemon`, `peak`, ...) only describe **platform** threads. A virtual thread is cheap, there can be hundreds of thousands, and the JVM has no "number of live virtual threads" counter. So this app adds what *can* be observed:
+Micrometer's standard JVM metrics (`jvm.threads.live`, `daemon`, `peak`, ...) only describe **platform** threads. A virtual thread is cheap and there can be hundreds of thousands of them, so they need dedicated metrics. On Java 25 the picture is much better than on 21, and this app adds the pieces the JDK does not expose directly:
 
-| Signal | Source | What it tells you |
-|---|---|---|
-| Requests in flight, split by virtual vs platform thread | `vtlab.http.requests.active{thread.type}` (a servlet filter in `VirtualThreadMetricsConfig`) | How many requests are being served on virtual threads right now. This is the closest stand-in for "active virtual threads". |
-| Pinned virtual threads | `jvm.threads.virtual.pinned` (Micrometer `VirtualThreadMetrics`, backed by the `jdk.VirtualThreadPinned` JFR event) | Times a virtual thread blocked while stuck to its carrier thread, and for how long. |
-| Failed virtual thread starts | `jvm.threads.virtual.submit.failed` (`jdk.VirtualThreadSubmitFailed` JFR event) | Scheduler failures. Should stay at 0. |
-| Platform thread count | `jvm.threads.live` | Stays flat under load when virtual threads are doing their job. |
-| Carrier threads | the platform threads named `ForkJoinPool-1-worker-N` (see a thread dump) | Roughly one per CPU core by default. |
+| Signal | Metric | Source | What it tells you |
+|---|---|---|---|
+| Virtual threads running or ready to run | `jvm.threads.virtual.live{scheduling.status=mounted\|queued}` | Micrometer, from the JDK's `VirtualThreadSchedulerMXBean` (**Java 25**) | `mounted`: running on a carrier right now. `queued`: ready to run but waiting for a free carrier. A growing `queued` means the carriers are the bottleneck. |
+| Carrier pool | `jvm.threads.virtual.parallelism`, `jvm.threads.virtual.pool.size` | Micrometer, same MXBean (**Java 25**) | Target and current number of carrier threads (one per CPU core by default). |
+| Virtual threads started / ended | `jvm.threads.virtual.started`, `jvm.threads.virtual.ended` | this app, from the `jdk.VirtualThreadStart` / `jdk.VirtualThreadEnd` JFR events | Thread creation rate (`rate(started)`): roughly one per request here. |
+| **All** virtual threads not yet finished | `jvm.threads.virtual.alive` | this app (`started - ended`) | Includes **parked** threads, i.e. the ones waiting on I/O, which is where virtual threads spend most of their time. About 1 s behind (JFR batches events). |
+| Pinned virtual threads | `jvm.threads.virtual.pinned` | Micrometer, `jdk.VirtualThreadPinned` JFR event | Times a virtual thread blocked while stuck to its carrier, and for how long. |
+| Failed virtual thread starts | `jvm.threads.virtual.submit.failed` | Micrometer, `jdk.VirtualThreadSubmitFailed` JFR event | Scheduler failures. Should stay at 0. |
+| Requests in flight, by thread type | `vtlab.http.requests.active{thread.type}` | this app (servlet filter) | How many HTTP requests are being served on virtual vs platform threads right now. |
+| Platform thread count | `jvm.threads.live` | Micrometer | Stays flat under load when virtual threads are doing their job. |
 
-Pinned events shorter than the JFR event's threshold (20 ms by default) are not reported.
+`parked` threads are `alive - mounted - queued`. Pinned events shorter than the JFR event's threshold (20 ms by default) are not reported.
+
+The scheduler meters (`live`, `parallelism`, `pool.size`) only exist on Java 25; on Java 21 they are absent. The start/end counters cost two JFR events per virtual thread; set `app.virtual-threads.lifecycle-events.enabled=false` to turn them off.
 
 ### Metric names: Actuator vs Grafana
 
@@ -192,6 +197,10 @@ The same metric has a different name depending on how it is read, because OTLP a
 | Signal | `/actuator/prometheus` | Grafana (OTLP) |
 |---|---|---|
 | In-flight requests | `vtlab_http_requests_active{thread_type=...}` | `vtlab_http_requests_active{thread_type=...}` |
+| Mounted / queued | `jvm_threads_virtual_live_threads{scheduling_status=...}` | `jvm_threads_virtual_live{scheduling_status=...}` |
+| Carrier pool | `jvm_threads_virtual_parallelism`, `jvm_threads_virtual_pool_size_threads` | `jvm_threads_virtual_parallelism`, `jvm_threads_virtual_pool_size` |
+| Started / ended | `jvm_threads_virtual_started_threads_total`, `..._ended_threads_total` | `jvm_threads_virtual_started_total`, `jvm_threads_virtual_ended_total` |
+| Alive (incl. parked) | `jvm_threads_virtual_alive_threads` | `jvm_threads_virtual_alive` |
 | Pinned count | `jvm_threads_virtual_pinned_seconds_count` | `jvm_threads_virtual_pinned_milliseconds_count` |
 | Pinned time | `..._pinned_seconds_sum` / `_max` | `..._pinned_milliseconds_sum` / `jvm_threads_virtual_pinned_max_milliseconds` |
 | Submit failed | `jvm_threads_virtual_submit_failed_total` | `jvm_threads_virtual_submit_failed_total` |
@@ -211,6 +220,11 @@ Useful queries (Grafana names):
 | Question | PromQL |
 |---|---|
 | How many requests are on virtual threads right now? | `vtlab_http_requests_active` |
+| Virtual threads running on carriers / waiting for one | `jvm_threads_virtual_live{scheduling_status="mounted"}`, `jvm_threads_virtual_live{scheduling_status="queued"}` |
+| All virtual threads alive (incl. parked) | `jvm_threads_virtual_alive` |
+| Parked virtual threads (waiting on I/O) | `sum(jvm_threads_virtual_alive) - sum(jvm_threads_virtual_live{scheduling_status=~"mounted|queued"})` |
+| Carrier utilisation (1 = every carrier busy) | `sum(jvm_threads_virtual_live{scheduling_status="mounted"}) / sum(jvm_threads_virtual_parallelism)` |
+| Virtual threads created per second | `rate(jvm_threads_virtual_started_total[1m])` |
 | Peak in-flight requests over the last 10 min | `max_over_time(vtlab_http_requests_active[10m])` |
 | Are platform threads staying flat? | `jvm_threads_live` |
 | Is anything getting pinned (events per second)? | `sum(rate(jvm_threads_virtual_pinned_milliseconds_count[1m]))` |
@@ -222,7 +236,7 @@ Useful queries (Grafana names):
 | DB connections in use / waiting | `hikaricp_connections_active`, `hikaricp_connections_pending` |
 | CPU and heap | `process_cpu_usage`, `jvm_memory_used_bytes{area="heap"}` |
 
-A good first dashboard: graph `vtlab_http_requests_active` (by `thread_type`) next to `jvm_threads_live`. Under load the first climbs into the hundreds while the second stays flat.
+A good first dashboard: graph `jvm_threads_virtual_alive` and `vtlab_http_requests_active` (by `thread_type`) next to `jvm_threads_live` and `jvm_threads_virtual_live` (by `scheduling_status`). Under load the first two climb into the hundreds while platform threads stay flat and only a handful of virtual threads are mounted at once.
 
 `rate()` needs at least two pushed samples, so a burst shorter than about two minutes can read 0. Use a sustained load test, or look at the raw counters.
 
@@ -230,20 +244,32 @@ A good first dashboard: graph `vtlab_http_requests_active` (by `thread_type`) ne
 
 - **In-flight virtual requests high, `jvm_threads_live` flat**: virtual threads are working. Hundreds of blocked requests are not costing platform threads.
 - **`platform` in-flight is always 0**: nothing is being served on a platform thread. If it is not 0, virtual threads are off or something is running outside the request threads.
-- **Pinned count rising**: some code blocks while holding a monitor (`synchronized`) or in a native call. With the `/system/pinned` demo you will see this immediately. Each pin holds a carrier thread, so enough pinned requests starve the whole scheduler.
-- **Pinned `max` large**: one stuck monitor can hold a carrier for that long.
+- **`alive` much larger than `mounted`**: most virtual threads are parked, waiting on I/O. That is the normal, healthy shape for an I/O-bound service. In a reference run, 146 threads were alive while at most 15 were mounted.
+- **`mounted` equal to `parallelism`**: every carrier is busy. If `queued` is also above 0, virtual threads are waiting for a carrier, so the service is CPU-bound or carriers are being held (pinning, long CPU work).
+- **Pinned count rising**: code blocks while a native frame (or a class initializer) is on the stack. With the `/system/pinned` demo you will see this immediately. Each pin holds a carrier thread, so enough pinned requests starve the whole scheduler.
+- **Pinned `max` large**: one blocked native call can hold a carrier for that long.
 - **`hikaricp_connections_pending` above 0**: virtual threads removed the thread limit, so the next limit is the database connection pool (10 connections by default). Many virtual threads queue for a connection. Size the pool or limit concurrency deliberately.
 - **Latency of `/system/slow` near the sleep time even at high load**: nothing is queued. With platform threads, requests beyond Tomcat's 200 worker threads would wait.
 
-### Pinning on Java 21
+### Pinning on Java 25
 
-On Java 21 a virtual thread is **pinned** to its carrier thread while it is inside a `synchronized` block or a native frame. If it blocks there (I/O, `sleep`, waiting on a lock), the carrier is blocked too. JDK 24 removed the `synchronized` case (JEP 491), but native calls can still pin.
+A virtual thread is **pinned** when it blocks but cannot unmount from its carrier thread, so the carrier is blocked too. What pins depends on the Java version:
+
+| Blocking while... | Java 21 | Java 24+ (incl. 25) |
+|---|---|---|
+| inside a `synchronized` block or method | pins | **does not pin** (JEP 491) |
+| a native method or foreign function frame is on the stack | pins | pins |
+| a class initializer (`static {}`) is running | pins | pins |
+
+That is why `/system/pinned` blocks inside a native `qsort` callback instead of `synchronized`: on Java 25 a `synchronized` demo would produce nothing. The test `synchronizedBlockingDoesNotPinOnJava25` pins that behaviour down.
+
+Typical real-world sources of pinning on 25 are native libraries that call back into Java, JNI code, and blocking work inside static initializers.
 
 To find the culprit when `jvm_threads_virtual_pinned_*` moves:
 
-- **Stack trace on pin**: start the JVM with `-Djdk.tracePinnedThreads=full` (or `short`). It prints the stack when a virtual thread blocks while pinned.
-- **JFR**: record the `jdk.VirtualThreadPinned` event, which includes the stack trace and duration.
-- **Fix**: replace `synchronized` around blocking work with `java.util.concurrent.locks.ReentrantLock`, or move the blocking call outside the monitor.
+- **JFR**: record the `jdk.VirtualThreadPinned` event; it includes the stack trace and duration. For example start the app with `-XX:StartFlightRecording=filename=pins.jfr,settings=profile` and inspect it with `jfr print --events jdk.VirtualThreadPinned pins.jfr`.
+- **`-Djdk.tracePinnedThreads`**: this used to print a stack trace on every pin, but it produces no output on Java 25 (checked). Use JFR.
+- **Fix**: move the blocking call out of the static initializer or the native callback, or give it a dedicated platform-thread executor.
 
 ### Virtual thread dumps
 
@@ -256,7 +282,7 @@ docker compose exec app-dev sh -c \
 docker compose cp app-dev:/tmp/threads.json ./threads.json
 ```
 
-Take one while a load test is running to see the virtual threads, their stacks, and the carrier each is mounted on.
+Take one while a load test is running to see the virtual threads and their stacks.
 
 ### Comparing with platform threads
 
@@ -320,6 +346,7 @@ The thread name in brackets shows which thread logged: `tomcat-handler-N` for vi
 | `spring.datasource.*` | `application.yaml` | Defaults to `localhost:5432/vtlab`. Overridden by docker-compose support on the host and by `SPRING_DATASOURCE_*` in the containers. |
 | `spring.jpa.hibernate.ddl-auto` | `application.yaml` | `validate`. Flyway owns the schema. |
 | `management.*` | `application.yaml` | Exposed endpoints, tags, latency histograms and SLO buckets for `http.server.requests` |
+| `app.virtual-threads.lifecycle-events.enabled` | `application.yaml` | Turns the JFR-based `jvm.threads.virtual.started/ended/alive` meters on (default) or off |
 | `app.sample-data.enabled` | `application.yaml` | Seeds two users, two posts and two comments into an empty database. Does nothing if users exist. |
 | `management.otlp.metrics.export.url`, `management.opentelemetry.*` | container env in `compose.yaml` | Points OTLP metrics, traces and logs at the `grafana-lgtm` container |
 
@@ -362,6 +389,7 @@ What the tests cover:
 - full user / post / comment lifecycle, validation errors, duplicate detection and cascading deletes
 - the Actuator metrics and Prometheus endpoints, including the virtual thread metrics
 - a real server on a random port confirming requests run on virtual threads
+- the virtual thread metrics: scheduler gauges, started/ended counters, `alive` counting parked threads, the native pinning demo being recorded as pinned, and `synchronized` blocking *not* being recorded
 - the application context loading against real Postgres with Flyway
 
 ## Docker details
@@ -400,6 +428,7 @@ compose.yaml, Dockerfile   local stack and production image
 
 - **`./gradlew clean` fails to delete `build/`**: the dev container mounts a volume over `build/`. Stop it first: `docker compose --profile dev stop app-dev`.
 - **Tests fail with `error while creating mount source path ... docker.raw.sock`**: Testcontainers' cleanup helper (Ryuk) cannot start on Docker Desktop for Mac when `~/.testcontainers.properties` sets `tc.host` to `docker.raw.sock`. The build disables Ryuk for tests (`TESTCONTAINERS_RYUK_DISABLED`). Removing the `tc.host` line also fixes it.
+- **`WARNING: A restricted method ... --enable-native-access`**: the `/system/pinned` demo uses the foreign function API. The Gradle run and test tasks and the Dockerfile pass `--enable-native-access=ALL-UNNAMED`; add it to any other way you launch the jar.
 - **Port 8080 or 5432 already in use**: stop the other container (`app-dev` and `app` both use 8080) or the local service on that port.
 - **No metrics in Grafana**: metrics are pushed once a minute, so wait a minute and widen the time range. After an app restart, old series linger for up to 5 minutes.
 - **A rate query shows 0**: `rate()` needs two samples. Run a sustained load test.

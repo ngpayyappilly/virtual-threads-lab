@@ -87,6 +87,11 @@ class ApiIntegrationTests {
 		mvc.perform(get("/actuator/prometheus")).andExpect(status().isOk());
 		mvc.perform(get("/actuator/metrics/vtlab.http.requests.active")).andExpect(status().isOk());
 		mvc.perform(get("/actuator/metrics/jvm.threads.virtual.pinned")).andExpect(status().isOk());
+		for (String name : new String[] { "jvm.threads.virtual.parallelism", "jvm.threads.virtual.pool.size",
+				"jvm.threads.virtual.live", "jvm.threads.virtual.started", "jvm.threads.virtual.ended",
+				"jvm.threads.virtual.alive" }) {
+			mvc.perform(get("/actuator/metrics/" + name)).andExpect(status().isOk());
+		}
 	}
 
 	private long createUser(String username, String email) throws Exception {

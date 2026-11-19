@@ -9,7 +9,7 @@ version = '0.0.1-SNAPSHOT'
 
 java {
 	toolchain {
-		languageVersion = JavaLanguageVersion.of(21)
+		languageVersion = JavaLanguageVersion.of(25)
 	}
 }
 
@@ -45,6 +45,8 @@ dependencies {
 }
 
 tasks.named('bootRun') {
+	// NativePinning (the /system/pinned demo) uses the foreign function API
+	jvmArgs '--enable-native-access=ALL-UNNAMED'
 	// Remote debugging for the dev container: set DEBUG_JVM=true (compose.yaml exposes 5005)
 	if (System.getenv('DEBUG_JVM') == 'true') {
 		jvmArgs '-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005'
@@ -53,6 +55,7 @@ tasks.named('bootRun') {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	jvmArgs '--enable-native-access=ALL-UNNAMED'
 	// Ryuk (Testcontainers' cleanup sidecar) can't mount the socket on Docker Desktop for macOS when
 	// ~/.testcontainers.properties sets tc.host to docker.raw.sock. Spring stops the test
 	// containers when the context closes, so cleanup still happens in normal runs.

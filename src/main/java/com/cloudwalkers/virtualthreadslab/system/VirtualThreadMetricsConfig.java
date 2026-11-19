@@ -11,6 +11,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -20,7 +21,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * their own metrics:
  * <ul>
  * <li>{@code jvm.threads.virtual.pinned} / {@code jvm.threads.virtual.submit.failed}: JFR
- * based, from {@link VirtualThreadMetrics}.</li>
+ * based, from {@link VirtualThreadMetrics}. On Java 25 the same binder also reads the
+ * scheduler MXBean and adds {@code jvm.threads.virtual.live{scheduling.status}},
+ * {@code parallelism} and {@code pool.size}.</li>
+ * <li>{@code jvm.threads.virtual.started/ended/alive}: from
+ * {@link VirtualThreadLifecycleMetrics} (JFR events), including parked threads.</li>
  * <li>{@code vtlab.http.requests.active{thread.type}}: requests currently being served,
  * split by virtual vs platform thread.</li>
  * </ul>
@@ -31,6 +36,13 @@ class VirtualThreadMetricsConfig {
 	@Bean
 	VirtualThreadMetrics virtualThreadMetrics() {
 		return new VirtualThreadMetrics();
+	}
+
+	@Bean
+	@ConditionalOnProperty(name = "app.virtual-threads.lifecycle-events.enabled", havingValue = "true",
+			matchIfMissing = true)
+	VirtualThreadLifecycleMetrics virtualThreadLifecycleMetrics() {
+		return new VirtualThreadLifecycleMetrics();
 	}
 
 	@Bean

@@ -31,7 +31,7 @@ services:
   # only starts services without a profile).
   app-dev:
     profiles: ['dev']
-    image: 'eclipse-temurin:21-jdk'
+    image: 'eclipse-temurin:25-jdk'
     working_dir: /app
     command: >
       sh -c "./gradlew --console=plain --continuous -q classes &
